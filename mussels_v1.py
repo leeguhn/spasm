@@ -31,7 +31,7 @@ class Muscle:
         self.myosin = np.zeros(myosin_heads)
         
         # Energy System
-        self.atp_available = 1.0
+        self.atp_available = resting_force
 
         # New Damage/Healing Attributes
         self.alive = True
@@ -115,6 +115,14 @@ class Muscle:
         
         self.regenerate_atp()
         self.check_damage()
+
+        # If there's no activation, apply an extra decay for any residual energy
+        if self.activation == 0.0:
+            decay_amount = 0.05   # adjust as needed for faster decay
+            if self.atp_available > self.resting_force:
+                self.atp_available = max(self.resting_force, self.atp_available - decay_amount)
+            if self.calcium_concentration > 0.0:
+                self.calcium_concentration = max(0.0, self.calcium_concentration - (decay_amount * 0.5))
         
         # Guarantee a moderate baseline force (simulate inherent muscle tone)
         self.force = max(self.force, self.resting_force)
