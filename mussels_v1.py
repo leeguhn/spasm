@@ -186,6 +186,26 @@ class Tissue:
         """Returns a full readable status."""
         statuses = [f"Muscle {i}: {muscle.update()}" for i, muscle in enumerate(self.muscles)]
         return "\n".join(statuses)
+    
+    def propagate_force(self, source_idx, base_force, positions, damping_factor=0.5):
+        """
+        Propagates energy from a source muscle through the network.
+        The additional force each muscle receives is a function of its 
+        distance from the source:
+        
+            added_force = (base_force / (1 + distance)) * damping_factor
+        
+        positions: a dict mapping muscle index to (x,y) coordinates.
+        """
+        source_pos = positions[source_idx]
+        for idx, pos in positions.items():
+            if idx == source_idx:
+                continue
+            dx = pos[0] - source_pos[0]
+            dy = pos[1] - source_pos[1]
+            distance = (dx**2 + dy**2)**0.5
+            added_force = (base_force / (1 + distance)) * damping_factor
+            self.muscles[idx].pump_energy(added_force)
 
 # Map each alphabet letter to a muscle
 KEYS = "qwertyuiopasdfghjklzxcvbnm"
@@ -193,7 +213,7 @@ KEYS = "qwertyuiopasdfghjklzxcvbnm"
 class MuscleGUI:
     def __init__(self):
         pygame.init()
-        pygame.key.set_repeat(200, 50)  # Enable continuous keydown events: delay 200ms, repeat every 50ms
+        pygame.key.set_repeat(0, 1000)  # Enable continuous keydown events: delay 200ms, repeat every 50ms
         
         self.width = 1200
         self.height = 600
@@ -211,6 +231,9 @@ class MuscleGUI:
 
         # Initialize time for breathing simulation
         self.time_elapsed = 0.0
+
+        # New: Track keys being held down.
+        self.held_keys = set()
 
     def wait_for_start(self):
         waiting = True
@@ -329,61 +352,167 @@ class MuscleGUI:
         key_lower = key.lower()
         if key_lower in self.muscle_mapping:
             idx = self.muscle_mapping[key_lower]
-            # Pump the selected muscle at full power (0.3)
-            self.network.muscles[idx].pump_energy(0.3)
+            base_force = 1.0  # Full force for the pressed node
+            # Pump the pressed muscle at full power.
+            self.network.muscles[idx].pump_energy(base_force)
+            # Propagate force to neighbors with a hard cap using neighbor mapping.
+            cap_percentage = 1.0
+            self.propagate_force_by_neighbors(idx, base_force, cap_percentage)
+
+    def propagate_force_by_neighbors(self, source_idx, base_force, cap_percentage, force_threshold=0.1):
+        """
+        Propagates force from the source muscle to all neighbors using a BFS.
+        Direct neighbors (level 1) get at most base_force * cap_percentage,
+        level 2 get at most base_force * (cap_percentage)^2, and so on.
+        force_threshold is used to cut off propagation when the pumped force becomes negligible.
+        """
+        # Define the neighbor mapping (same as in draw_tendons)
+        neighbor_map = {
+            'q': ['w', 'a', 's'],
+            'w': ['q', 'e', 'a', 's', 'd'],
+            'e': ['w', 'r', 's', 'd', 'f'],
+            'r': ['e', 't', 'd', 'f', 'g'],
+            't': ['r', 'y', 'f', 'g', 'h'],
+            'y': ['t', 'u', 'g', 'h', 'j'],
+            'u': ['y', 'i', 'h', 'j', 'k'],
+            'i': ['u', 'o', 'j', 'k', 'l'],
+            'o': ['i', 'p', 'k', 'l'],
+            'p': ['o', 'l'],
+            'a': ['q', 'w', 's', 'z'],
+            's': ['q', 'w', 'e', 'a', 'd', 'z', 'x'],
+            'd': ['w', 'e', 'r', 's', 'f', 'x', 'c'],
+            'f': ['e', 'r', 't', 'd', 'g', 'c', 'v'],
+            'g': ['r', 't', 'y', 'f', 'h', 'v', 'b'],
+            'h': ['t', 'y', 'u', 'g', 'j', 'b', 'n'],
+            'j': ['y', 'u', 'i', 'h', 'k', 'n', 'm'],
+            'k': ['u', 'i', 'o', 'j', 'l', 'm'],
+            'l': ['i', 'o', 'p', 'k'],
+            'z': ['a', 's', 'x'],
+            'x': ['s', 'd', 'z', 'c'],
+            'c': ['d', 'f', 'x', 'v'],
+            'v': ['f', 'g', 'c', 'b'],
+            'b': ['g', 'h', 'v', 'n'],
+            'n': ['h', 'j', 'b', 'm'],
+            'm': ['j', 'k', 'n']
+        }
+        # Build inverse mapping: index → letter.
+        inv_mapping = {v: k for k, v in self.muscle_mapping.items()}
+        
+        visited = set()
+        queue = [(source_idx, 0)]  # Each tuple: (muscle index, level)
+        visited.add(source_idx)
+        
+        while queue:
+            current, level = queue.pop(0)
+            current_letter = inv_mapping[current]
+            # Determine the force multiplier for the next level.
+            next_level_multiplier = cap_percentage ** (level + 1)
+            propagated_force = base_force * next_level_multiplier
+            if propagated_force < force_threshold:
+                continue  # Stop propagation if force is negligible.
+            # Get neighbors from neighbor_map (if any).
+            for neighbor_letter in neighbor_map.get(current_letter, []):
+                if neighbor_letter in self.muscle_mapping:
+                    neighbor_idx = self.muscle_mapping[neighbor_letter]
+                    if neighbor_idx not in visited:
+                        # Pump the neighbor with the capped propagated force.
+                        self.network.muscles[neighbor_idx].pump_energy(propagated_force)
+                        visited.add(neighbor_idx)
+                        queue.append((neighbor_idx, level + 1))
+
+    def propagate_force_by_neighbors_realtime(self, source_idx, center_force, cap_percentage):
+        """
+        For the center node with current force "center_force", ensure that every neighboring
+        node is at least at the capped level relative to center_force.
+        Direct neighbors should be at most center_force * cap_percentage,
+        level 2 at most center_force * (cap_percentage)^2, etc.
+        """
+        neighbor_map = {
+            'q': ['w', 'a', 's'],
+            'w': ['q', 'e', 'a', 's', 'd'],
+            'e': ['w', 'r', 's', 'd', 'f'],
+            'r': ['e', 't', 'd', 'f', 'g'],
+            't': ['r', 'y', 'f', 'g', 'h'],
+            'y': ['t', 'u', 'g', 'h', 'j'],
+            'u': ['y', 'i', 'h', 'j', 'k'],
+            'i': ['u', 'o', 'j', 'k', 'l'],
+            'o': ['i', 'p', 'k', 'l'],
+            'p': ['o', 'l'],
+            'a': ['q', 'w', 's', 'z'],
+            's': ['q', 'w', 'e', 'a', 'd', 'z', 'x'],
+            'd': ['w', 'e', 'r', 's', 'f', 'x', 'c'],
+            'f': ['e', 'r', 't', 'd', 'g', 'c', 'v'],
+            'g': ['r', 't', 'y', 'f', 'h', 'v', 'b'],
+            'h': ['t', 'y', 'u', 'g', 'j', 'b', 'n'],
+            'j': ['y', 'u', 'i', 'h', 'k', 'n', 'm'],
+            'k': ['u', 'i', 'o', 'j', 'l', 'm'],
+            'l': ['i', 'o', 'p', 'k'],
+            'z': ['a', 's', 'x'],
+            'x': ['s', 'd', 'z', 'c'],
+            'c': ['d', 'f', 'x', 'v'],
+            'v': ['f', 'g', 'c', 'b'],
+            'b': ['g', 'h', 'v', 'n'],
+            'n': ['h', 'j', 'b', 'm'],
+            'm': ['j', 'k', 'n']
+        }
+        # Build inverse mapping: index -> letter.
+        inv_mapping = {v: k for k, v in self.muscle_mapping.items()}
+        
+        visited = set()
+        queue = [(source_idx, 0)]  # Each tuple: (neighbor muscle index, level)
+        visited.add(source_idx)
+        
+        while queue:
+            current, level = queue.pop(0)
+            # The target maximum force for a neighbor at this level:
+            target_force = center_force * (cap_percentage ** (level + 1))
             
-            # Define neighbor mapping (same as used in draw_tendons)
-            neighbor_map = {
-                'q': ['w', 'a', 's'],
-                'w': ['q', 'e', 'a', 's', 'd'],
-                'e': ['w', 'r', 's', 'd', 'f'],
-                'r': ['e', 't', 'd', 'f', 'g'],
-                't': ['r', 'y', 'f', 'g', 'h'],
-                'y': ['t', 'u', 'g', 'h', 'j'],
-                'u': ['y', 'i', 'h', 'j', 'k'],
-                'i': ['u', 'o', 'j', 'k', 'l'],
-                'o': ['i', 'p', 'k', 'l'],
-                'p': ['o', 'l'],
-                'a': ['q', 'w', 's', 'z'],
-                's': ['q', 'w', 'e', 'a', 'd', 'z', 'x'],
-                'd': ['w', 'e', 'r', 's', 'f', 'x', 'c'],
-                'f': ['e', 'r', 't', 'd', 'g', 'c', 'v'],
-                'g': ['r', 't', 'y', 'f', 'h', 'v', 'b'],
-                'h': ['t', 'y', 'u', 'g', 'j', 'b', 'n'],
-                'j': ['y', 'u', 'i', 'h', 'k', 'n', 'm'],
-                'k': ['u', 'i', 'o', 'j', 'l', 'm'],
-                'l': ['i', 'o', 'p', 'k'],
-                'z': ['a', 's', 'x'],
-                'x': ['s', 'd', 'z', 'c'],
-                'c': ['d', 'f', 'x', 'v'],
-                'v': ['f', 'g', 'c', 'b'],
-                'b': ['g', 'h', 'v', 'n'],
-                'n': ['h', 'j', 'b', 'm'],
-                'm': ['j', 'k', 'n']
-            }
-            # If there are neighbors for this key, pump them with half power (0.15)
-            if key_lower in neighbor_map:
-                for nb in neighbor_map[key_lower]:
-                    if nb in self.muscle_mapping:
-                        nb_idx = self.muscle_mapping[nb]
-                        self.network.muscles[nb_idx].pump_energy(0.15)
+            current_letter = inv_mapping[current]
+            for neighbor_letter in neighbor_map.get(current_letter, []):
+                if neighbor_letter in self.muscle_mapping:
+                    neighbor_idx = self.muscle_mapping[neighbor_letter]
+                    if neighbor_idx not in visited:
+                        visited.add(neighbor_idx)
+                        neighbor_muscle = self.network.muscles[neighbor_idx]
+                        # Only pump if the neighbor's force is below the cap.
+                        if neighbor_muscle.force < target_force:
+                            pump_amount = target_force - neighbor_muscle.force
+                            neighbor_muscle.pump_energy(pump_amount)
+                        queue.append((neighbor_idx, level + 1))
 
     def run(self):
         import math
         self.wait_for_start()  # Wait until user presses a key
+        
         while self.running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
                 
                 if event.type == pygame.KEYDOWN:
-                    if event.unicode.lower() in self.muscle_mapping:
-                        self.pump_muscle(event.unicode)
+                    key_lower = event.unicode.lower()
+                    if key_lower in self.muscle_mapping:
+                        self.held_keys.add(key_lower)
+                if event.type == pygame.KEYUP:
+                    key_lower = event.unicode.lower()
+                    if key_lower in self.held_keys:
+                        self.held_keys.remove(key_lower)
             
+            # For every key that's being held, pump its corresponding muscle.
+            for key in self.held_keys:
+                idx = self.muscle_mapping[key]
+                self.network.muscles[idx].pump_energy(1.0)  # Full force pump for center node.
+                # Pump the center node at full force.
+                self.network.muscles[idx].pump_energy(1.0)
+                # Now correct neighboring nodes to hold only the capped fraction.
+                cap_percentage = 0.66  # Adjust this percentage as desired.
+                center_force = self.network.muscles[idx].force
+                self.propagate_force_by_neighbors_realtime(idx, center_force, cap_percentage)
+
             # Breathing Pattern: autonomous sine wave activation across the network
-            self.time_elapsed += 0.02
-            breath_activation = 0.5 + 0.5 * math.sin(self.time_elapsed)
-            self.network.set_activation(breath_activation)
+            # self.time_elapsed += 0.02
+            # breath_activation = 0.5 + 0.5 * math.sin(self.time_elapsed)
+            # self.network.set_activation(breath_activation)
             
             # Stimulate and update network
             self.network.stimulate(intensity=1.0)
