@@ -1,5 +1,6 @@
 import numpy as np
 import pygame
+import random
 
 class Muscle:
     """A node representing a muscle fiber with dynamic contraction and fatigue mechanisms."""
