@@ -47,8 +47,8 @@ class Scatterplot:
 
     def update_dots(self, muscle_forces):
         k_spring = 0.01  # spring constant for rest position
-        damping = 0.05   # velocity damping for resistance
-        pull_strength = 0.4  # how strong the node pull is
+        damping = 0.92   # velocity damping for resistance
+        pull_strength = 0.04  # how strong the node pull is
 
         for dot in self.dots:
             idx = dot['closest']
