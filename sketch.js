@@ -4,17 +4,13 @@ let cols = 20, rows_ = 14; // renamed 'rows' to 'rows_'
 let mesh = [];
 let nodes = [];
 let keyToNode = {};
-let assets = [];
-let assetCount = 50; // Change to your number of PNGs
 
-function preload() {
-    for (let i = 0; i < assetCount; i++) {
-      assets.push(loadImage('assets/asset_' + i + '.png'));
-    }
+function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
 }
 
 function setup() {
-  createCanvas(900, 600, WEBGL);
+  createCanvas(windowWidth, windowHeight, WEBGL);
 
   // 1. Create mesh grid
   for (let y = 0; y < rows_; y++) {
@@ -54,7 +50,7 @@ function setup() {
 }
 
 function draw() {
-  background(20);
+  background(255);
   orbitControl();
 
   // --- Mesh physics ---
@@ -97,7 +93,7 @@ function draw() {
   }
 
   // --- Draw mesh as lines ---
-  stroke(255, 255, 255, 180);
+  stroke(0);
   noFill();
   for (let y = 0; y < rows_; y++) {
     beginShape();
@@ -116,7 +112,7 @@ function draw() {
 
   // --- Draw dots at mesh intersection points with slight jitter ---
   noStroke();
-  fill(255, 220, 220, 180);
+  fill(0);
   for (let y = 0; y < rows_; y++) {
     for (let x = 0; x < cols; x++) {
       let p = mesh[y][x];

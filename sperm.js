@@ -3,28 +3,43 @@ let mesh = [];
 let nodes = [];
 let keyToNode = {};
 let assets = [];
-let assetCount = 50; // Set to your number of PNGs
+let assetCount = 333; // Set to your number of PNGs
 let spermCells = [];
 
 function preload() {
-  for (let i = 0; i < assetCount; i++) {
-    assets.push(loadImage('algo/line_' + i + '.png'));
-  }
+    for (let i = 1; i <= assetCount; i++) {
+      assets.push(loadImage(
+        'algo/line_' + i + '.PNG',
+        () => {}, // success callback
+        () => { console.error('Failed to load: algo/line_' + i + '.png'); }
+      ));
+    }
+}
+
+function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
 }
 
 function setup() {
-  createCanvas(900, 600, WEBGL);
+  createCanvas(windowWidth, windowHeight, WEBGL);
 
-  // 1. Create mesh grid (invisible substrate)
+  let marginX = 80;
+  let marginY = 80;
+
+  // 1. Create mesh grid (invisible substrate) -- now fills the viewport
+  mesh = [];
   for (let y = 0; y < rows_; y++) {
     let meshRow = [];
     for (let x = 0; x < cols; x++) {
+      // Map mesh to fill most of the window, with a margin
+      let px = map(x, 0, cols - 1, -width / 2 + marginX, width / 2 - marginX);
+      let py = map(y, 0, rows_ - 1, -height / 2 + marginY, height / 2 - marginY);
       meshRow.push({
-        x: map(x, 0, cols-1, -400, 400),
-        y: map(y, 0, rows_-1, -250, 250),
+        x: px,
+        y: py,
         vx: 0, vy: 0,
-        rest_x: map(x, 0, cols-1, -400, 400),
-        rest_y: map(y, 0, rows_-1, -250, 250)
+        rest_x: px,
+        rest_y: py
       });
     }
     mesh.push(meshRow);
@@ -41,9 +56,9 @@ function setup() {
   let totalRows = keyboardRows.length;
   for (let row = 0; row < totalRows; row++) {
     let keys = keyboardRows[row];
-    let y = map(row, 0, totalRows - 1, -250, 250);
+    let y = map(row, 0, totalRows - 1, -height / 2 + marginY, height / 2 - marginY);
     for (let col = 0; col < keys.length; col++) {
-      let x = map(col, 0, keys.length - 1, -400, 400);
+      let x = map(col, 0, keys.length - 1, -width / 2 + marginX, width / 2 - marginX);
       let key = keys[col];
       let node = { x, y, force: 0 };
       nodes.push(node);
@@ -53,18 +68,24 @@ function setup() {
 
   // 3. Create sperm cells, one per asset, initially at mesh points
   spermCells = [];
+  let numSpermCells = min(assets.length, 500); // or any number you want
+  
   let idx = 0;
   for (let y = 0; y < rows_; y++) {
     for (let x = 0; x < cols; x++) {
       if (idx < assets.length) {
         let p = mesh[y][x];
+        let jitter = 30; // scatter positions a bit
         spermCells.push({
-          x: p.x,
-          y: p.y,
+          x: p.x + random(-jitter, jitter),
+          y: p.y + random(-jitter, jitter),
           vx: random(-1, 1),
           vy: random(-1, 1),
           img: assets[idx],
-          meshIdx: {x, y}
+          meshIdx: {x, y},
+          scale: random(0.6, 1.2),         // random scale factor
+          angle: random(TWO_PI),           // random initial angle
+          angleSpeed: random(-0.02, 0.02)  // random rotation speed
         });
         idx++;
       }
@@ -72,17 +93,34 @@ function setup() {
   }
 }
 
+let lastShuffle = 0;
+let shuffleInterval = 111; // milliseconds (0.5 seconds)
+
 function draw() {
-  background(20);
+  background(255);
   orbitControl();
+
+  // Shuffle a few sperm cell images at a set interval
+  if (millis() - lastShuffle > shuffleInterval) {
+    let swapsPerInterval = 36; // Number of swaps per interval
+    for (let n = 0; n < swapsPerInterval; n++) {
+      let i = floor(random(spermCells.length));
+      let j = floor(random(spermCells.length));
+      // Swap the img property only
+      let temp = spermCells[i].img;
+      spermCells[i].img = spermCells[j].img;
+      spermCells[j].img = temp;
+    }
+    lastShuffle = millis();
+  }
 
   // --- Mesh physics (invisible) ---
   for (let y = 0; y < rows_; y++) {
     for (let x = 0; x < cols; x++) {
       let p = mesh[y][x];
       // Spring to rest
-      let fx = (p.rest_x - p.x) * 0.08;
-      let fy = (p.rest_y - p.y) * 0.08;
+      let fx = (p.rest_x - p.x) * 0.04;
+      let fy = (p.rest_y - p.y) * 0.04;
       // Pull by muscle nodes
       for (let node of nodes) {
         let d = dist(p.x, p.y, node.x, node.y);
@@ -103,12 +141,9 @@ function draw() {
   for (let cell of spermCells) {
     // Pull toward current mesh point (elastic, but loose)
     let p = mesh[cell.meshIdx.y][cell.meshIdx.x];
+    
     let fx = (p.x - cell.x) * 0.01;
     let fy = (p.y - cell.y) * 0.01;
-
-    // Add organic drift (Perlin noise)
-    fx += (noise(cell.x * 0.01, frameCount * 0.01) - 0.5) * 0.5;
-    fy += (noise(cell.y * 0.01, frameCount * 0.01) - 0.5) * 0.5;
 
     // Add velocity and damping
     cell.vx = (cell.vx + fx) * 0.96;
@@ -116,12 +151,27 @@ function draw() {
     cell.x += cell.vx;
     cell.y += cell.vy;
 
-    // Draw the asset (centered, scaled to max 64px)
+    // Animate rotation
+    cell.angle += cell.angleSpeed;
+
+    // Optionally, animate scale for a "breathing" effect:
+    let animatedScale = cell.scale + 0.1 * sin(frameCount * 0.03 + cell.x);
+
+    // Draw the asset with rotation and scale
+    push();
+    translate(cell.x, cell.y);
+    rotate(cell.angle);
     imageMode(CENTER);
     let maxSize = 64;
-    let scale = min(maxSize / max(cell.img.width, cell.img.height), 1);
-    image(cell.img, cell.x, cell.y, cell.img.width * scale, cell.img.height * scale);
+    let scale = min(maxSize / max(cell.img.width, cell.img.height), 1) * animatedScale;
+    image(cell.img, 0, 0, cell.img.width * scale, cell.img.height * scale);
+    pop();
   }
+}
+
+// Helper function: returns true if any node is active
+function anyNodeActive() {
+    return nodes.some(node => node.force > 0);
 }
 
 // --- Keyboard controls for muscle nodes ---
