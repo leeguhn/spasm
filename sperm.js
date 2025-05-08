@@ -1,22 +1,21 @@
-// --- p5.js + WEBGL: Mesh + Voronoi + Keyboard Control ---
-
-let cols = 20, rows_ = 14; // renamed 'rows' to 'rows_'
+let cols = 20, rows_ = 14;
 let mesh = [];
 let nodes = [];
 let keyToNode = {};
 let assets = [];
-let assetCount = 50; // Change to your number of PNGs
+let assetCount = 50; // Set to your number of PNGs
+let spermCells = [];
 
 function preload() {
-    for (let i = 0; i < assetCount; i++) {
-      assets.push(loadImage('assets/asset_' + i + '.png'));
-    }
+  for (let i = 0; i < assetCount; i++) {
+    assets.push(loadImage('algo/line_' + i + '.png'));
+  }
 }
 
 function setup() {
   createCanvas(900, 600, WEBGL);
 
-  // 1. Create mesh grid
+  // 1. Create mesh grid (invisible substrate)
   for (let y = 0; y < rows_; y++) {
     let meshRow = [];
     for (let x = 0; x < cols; x++) {
@@ -51,13 +50,33 @@ function setup() {
       keyToNode[key] = nodes.length - 1;
     }
   }
+
+  // 3. Create sperm cells, one per asset, initially at mesh points
+  spermCells = [];
+  let idx = 0;
+  for (let y = 0; y < rows_; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (idx < assets.length) {
+        let p = mesh[y][x];
+        spermCells.push({
+          x: p.x,
+          y: p.y,
+          vx: random(-1, 1),
+          vy: random(-1, 1),
+          img: assets[idx],
+          meshIdx: {x, y}
+        });
+        idx++;
+      }
+    }
+  }
 }
 
 function draw() {
   background(20);
   orbitControl();
 
-  // --- Mesh physics ---
+  // --- Mesh physics (invisible) ---
   for (let y = 0; y < rows_; y++) {
     for (let x = 0; x < cols; x++) {
       let p = mesh[y][x];
@@ -80,53 +99,29 @@ function draw() {
     }
   }
 
-  // --- Voronoi: use muscle nodes as sites ---
-  let voronoiSites = nodes.map(n => ({x: n.x, y: n.y}));
-  let cellMap = {};
-  let step = 16;
-  for (let x = -400; x < 400; x += step) {
-    for (let y = -250; y < 250; y += step) {
-      let minD = 1e9, minIdx = -1;
-      for (let i = 0; i < voronoiSites.length; i++) {
-        let d = dist(x, y, voronoiSites[i].x, voronoiSites[i].y);
-        if (d < minD) { minD = d; minIdx = i; }
-      }
-      if (!cellMap[minIdx]) cellMap[minIdx] = [];
-      cellMap[minIdx].push([x, y]);
-    }
-  }
+  // --- Animate and draw sperm cells ---
+  for (let cell of spermCells) {
+    // Pull toward current mesh point (elastic, but loose)
+    let p = mesh[cell.meshIdx.y][cell.meshIdx.x];
+    let fx = (p.x - cell.x) * 0.01;
+    let fy = (p.y - cell.y) * 0.01;
 
-  // --- Draw mesh as lines ---
-  stroke(255, 255, 255, 180);
-  noFill();
-  for (let y = 0; y < rows_; y++) {
-    beginShape();
-    for (let x = 0; x < cols; x++) {
-      vertex(mesh[y][x].x, mesh[y][x].y);
-    }
-    endShape();
-  }
-  for (let x = 0; x < cols; x++) {
-    beginShape();
-    for (let y = 0; y < rows_; y++) {
-      vertex(mesh[y][x].x, mesh[y][x].y);
-    }
-    endShape();
-  }
+    // Add organic drift (Perlin noise)
+    fx += (noise(cell.x * 0.01, frameCount * 0.01) - 0.5) * 0.5;
+    fy += (noise(cell.y * 0.01, frameCount * 0.01) - 0.5) * 0.5;
 
-  // --- Draw dots at mesh intersection points with slight jitter ---
-  noStroke();
-  fill(255, 220, 220, 180);
-  for (let y = 0; y < rows_; y++) {
-    for (let x = 0; x < cols; x++) {
-      let p = mesh[y][x];
-      // Add organic jitter using Perlin noise
-      let jitterX = noise(p.x * 0.03, p.y * 0.03, frameCount * 0.01) * 2 - 1;
-      let jitterY = noise(p.y * 0.03, p.x * 0.03, frameCount * 0.01) * 2 - 1;
-      ellipse(p.x + jitterX, p.y + jitterY, 8, 8);
-    }
-  }
+    // Add velocity and damping
+    cell.vx = (cell.vx + fx) * 0.96;
+    cell.vy = (cell.vy + fy) * 0.96;
+    cell.x += cell.vx;
+    cell.y += cell.vy;
 
+    // Draw the asset (centered, scaled to max 64px)
+    imageMode(CENTER);
+    let maxSize = 64;
+    let scale = min(maxSize / max(cell.img.width, cell.img.height), 1);
+    image(cell.img, cell.x, cell.y, cell.img.width * scale, cell.img.height * scale);
+  }
 }
 
 // --- Keyboard controls for muscle nodes ---
