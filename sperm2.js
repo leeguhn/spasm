@@ -66,30 +66,42 @@ function setup() {
     }
   }
 
-  // 3. Create sperm cells, one per asset, initially at mesh points
+  // 3. Create sperm cells, scattered randomly
   spermCells = [];
-  let numSpermCells = min(assets.length, 500); // or any number you want
+  let desiredAssetCount = 800; // set your desired number of sperm cells
+  let minSpacing = 50;         // Minimum spacing between pieces
+
+  for (let i = 0; i < desiredAssetCount; i++) {
+  let candidate;
+  let attempts = 0;
   
-  let idx = 0;
-  for (let y = 0; y < rows_; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (idx < assets.length) {
-        let p = mesh[y][x];
-        let jitter = 30; // scatter positions a bit
-        spermCells.push({
-          x: p.x + random(-jitter, jitter),
-          y: p.y + random(-jitter, jitter),
-          vx: random(-1, 1),
-          vy: random(-1, 1),
-          img: assets[idx],
-          meshIdx: {x, y},
-          scale: random(0.6, 1.2),         // random scale factor
-          angle: random(TWO_PI),           // random initial angle
-          angleSpeed: random(-0.02, 0.02)  // random rotation speed
-        });
-        idx++;
+  // Try at most 30 times to find a candidate with enough spacing
+  while (attempts < 30) {
+    let x = random(-width / 2 + marginX, width / 2 - marginX);
+    let y = random(-height / 2 + marginY, height / 2 - marginY);
+    candidate = { x, y };
+    let conflict = false;
+    for (let cell of spermCells) {
+      if (dist(cell.x, cell.y, candidate.x, candidate.y) < minSpacing) {
+        conflict = true;
+        break;
       }
     }
+    if (!conflict) {
+      break;
+    }
+    attempts++;
+  }
+  spermCells.push({
+    x: candidate.x,
+    y: candidate.y,
+    vx: random(-1, 1),
+    vy: random(-1, 1),
+    img: assets[i % assets.length], // Cycle through assets if needed
+    scale: random(0.3, 0.5),          // Smaller asset scale
+    angle: random(TWO_PI),
+    angleSpeed: random(-0.02, 0.02)
+    });
   }
   
 }
@@ -140,11 +152,16 @@ function draw() {
 
   // --- Animate and draw sperm cells ---
   for (let cell of spermCells) {
-    // Pull toward current mesh point (elastic, but loose)
-    let p = mesh[cell.meshIdx.y][cell.meshIdx.x];
-    
-    let fx = (p.x - cell.x) * 0.01;
-    let fy = (p.y - cell.y) * 0.01;
+    // New force calculation from active muscle nodes:
+    let fx = 0, fy = 0;
+    for (let node of nodes) {
+      let d = dist(cell.x, cell.y, node.x, node.y);
+      if (node.force > 0 && d < 180) {
+          let strength = 3 * node.force * (180 - d) / 180;
+          fx += (node.x - cell.x) * strength * 0.005;
+          fy += (node.y - cell.y) * strength * 0.005;
+      }
+    }
 
     // Add velocity and damping
     cell.vx = (cell.vx + fx) * 0.96;
