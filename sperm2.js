@@ -5,6 +5,7 @@ let keyToNode = {};
 let assets = [];
 let assetCount = 333; // Set to your number of PNGs
 let spermCells = [];
+  
 
 function preload() {
     for (let i = 1; i <= assetCount; i++) {
@@ -21,6 +22,7 @@ function windowResized() {
 }
 
 function setup() {
+
   createCanvas(windowWidth, windowHeight, WEBGL);
 
   let marginX = 80;
@@ -77,8 +79,8 @@ function setup() {
   
   // Try at most 30 times to find a candidate with enough spacing
   while (attempts < 30) {
-    let x = random(-width / 2 + marginX, width / 2 - marginX);
-    let y = random(-height / 2 + marginY, height / 2 - marginY);
+    let x = random(-width / 2, width / 2);
+    let y = random(-height / 2, height / 2);
     candidate = { x, y };
     let conflict = false;
     for (let cell of spermCells) {
@@ -111,11 +113,12 @@ let shuffleInterval = 111; // milliseconds (0.5 seconds)
 
 function draw() {
   background(255);
-  orbitControl();
+  
+  //orbitControl();
 
   // Shuffle a few sperm cell images at a set interval
   if (millis() - lastShuffle > shuffleInterval) {
-    let swapsPerInterval = 36; // Number of swaps per interval
+    let swapsPerInterval = 108; // Number of swaps per interval
     for (let n = 0; n < swapsPerInterval; n++) {
       let i = floor(random(spermCells.length));
       let j = floor(random(spermCells.length));
@@ -169,6 +172,23 @@ function draw() {
     cell.x += cell.vx;
     cell.y += cell.vy;
 
+    // Bounce off the viewport edges:
+    // The viewport bounds are from -width/2 to width/2 and -height/2 to height/2.
+    if(cell.x < -width/2) {
+      cell.x = -width/2;
+      cell.vx *= -1;
+    } else if(cell.x > width/2) {
+      cell.x = width/2;
+      cell.vx *= -1;
+    }
+    if(cell.y < -height/2) {
+      cell.y = -height/2;
+      cell.vy *= -1;
+    } else if(cell.y > height/2) {
+      cell.y = height/2;
+      cell.vy *= -1;
+    }
+
     // Animate rotation
     cell.angle += cell.angleSpeed;
 
@@ -193,15 +213,30 @@ function anyNodeActive() {
 }
 
 // --- Keyboard controls for muscle nodes ---
+// --- Replace your keyPressed function with the following ---
 function keyPressed() {
-  let k = key.toLowerCase();
-  if (k in keyToNode) {
-    nodes[keyToNode[k]].force = 1;
+  if (keyCode === 32) {  // Space bar: gentle shake to disperse
+    for (let cell of spermCells) {
+      cell.vx = random(-2, 2);
+      cell.vy = random(-2, 2);
+    }
+  } else if (keyCode === ENTER || keyCode === RETURN) {  // Backspace/Delete: firm reset to disintegrate clusters
+    for (let cell of spermCells) {
+      cell.vx = random(-16, 16);  // stronger impulse
+      cell.vy = random(-16, 16);
+    }
+  } else {
+    let k = key.toLowerCase();
+    if (k in keyToNode) {
+      nodes[keyToNode[k]].force = 1;
+    }
   }
+  return false;
 }
 function keyReleased() {
   let k = key.toLowerCase();
   if (k in keyToNode) {
     nodes[keyToNode[k]].force = 0;
   }
+  return false;
 }
